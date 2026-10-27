@@ -1,0 +1,6 @@
+- ws2812 support (waveshare rp2350 zero, main.c)
+- disabled volume scaling (lib/pico-i2s-pio/i2s_uac.c i2s_volume())
+- initialization defaults (main.c)
+    i2s_set_config(pio0, CLOCK_MODE_DEFAULT, MODE_I2S_SLAVE);
+    i2s_set_pin(6, 14, 13); // DOUT, LRCLK(BCLK=15), MCLK
+- removed multiple freqs, initialize to 48000 by default, configurable via (audio10_set_req_ep(), audio20_clock_set_request())

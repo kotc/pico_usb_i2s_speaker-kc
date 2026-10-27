@@ -1,0 +1,127 @@
+From ddfbffbfc6b265ca99f28441833bc508608d934b Mon Sep 17 00:00:00 2001
+From: Troy <troy2063@gmail.com>
+Date: Wed, 21 Oct 2026 21:46:32 +0100
+Subject: [PATCH] Fix i2s_slave: drive DOUT on BCLK falling edge, tolerate
+ LRCLK skew
+
+The slave program changed DOUT just after the BCLK rising edge (the
+receiver's latch edge), leaving only the PIO input-sync latency (~20-30 ns)
+as hold time. It also mis-framed the left channel by one bit (L x2, wraps
+above -6 dBFS) whenever LRCLK led the BCLK falling edge by more than
+~30-40 ns, and failed at 96 kHz with LRCLK lagging by >~40 ns.
+
+All 64 bits are now driven on BCLK falling edges. LRCLK is sampled on the
+BCLK rising edge before each LSB only to keep/restore frame alignment, so
+L/R order is preserved and alignment recovers after an underrun or BCLK
+glitch. Requires JMP_PIN = LRCLK (set in i2s_slave_pio_init).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01LUwAmJnwBM9jtLPxA1mGE9
+---
+ i2s.pio    | 70 ++++++++++++++++++++++++++++++++----------------------
+ i2s_core.c |  1 +
+ 2 files changed, 42 insertions(+), 29 deletions(-)
+
+diff --git a/i2s.pio b/i2s.pio
+index a77a4f8..1b578d7 100644
+--- a/i2s.pio
++++ b/i2s.pio
+@@ -195,42 +195,54 @@ out pins, 1     [1]
+ 
+ ;i2s_slave
+ .program i2s_slave
+-;in pin 0   LRCLK
++; I2S slave transmitter: 64fs BCLK, 32-bit slots, MSB first, 1-bit delay after LRCLK.
++;in pin 0   LRCLK  (also JMP_PIN)
+ ;in pin 1   BCLK
+-;r LSB
++;
++; Every bit, including both LSBs, is driven on a BCLK *falling* edge, so DOUT is
++; stable for about half a BCLK period either side of the rising edge on which the
++; receiver latches it, whatever the LRCLK/BCLK skew. (The previous version changed
++; DOUT just after the rising edge, leaving only the PIO input-sync latency as hold
++; time; a DAC that missed it latched the following bit -> signal-dependent distortion.)
++;
++; LRCLK is only used to keep frame alignment. It is sampled on the BCLK rising edge
++; before each LSB (where it is stable even with LRCLK/BCLK skew of up to ~half a BCLK
++; period either way): if it has already changed we are behind (e.g. a TX FIFO underrun
++; stalled `pull block`) and the LSB is sent at once to catch up one bit per half-frame;
++; if we are ahead, we hold after the LSB until LRCLK changes.
++; Words are always pulled L,R,L,R so the channel order can never swap.
++
++; start-up: find the start of a frame
++    wait 1 pin 0
+     wait 0 pin 0
+-    out pins 1
+-    wait 1 pin 1
+-    pull block
+-
+-;l MSB
+-    wait 1 pin 1
+-    out pins 1
+     wait 0 pin 1
+-    set y 29
+-
+-;l nbit
+-L_LOOP:
++.wrap_target
++    pull block              ; L word
++    set y 30
++L_LOOP:                     ; L bit31..bit1 on falls 1..31
+     wait 1 pin 1
+-    out pins 1
+     wait 0 pin 1
+-    jmp y-- L_LOOP
+-
+-;l LSB
+-    wait 1 pin 0
+     out pins 1
+-    wait 0 pin 1
+-    pull block
+-
+-;r MSB
++    jmp y-- L_LOOP
++    wait 1 pin 1            ; rising edge in slot 31 (LRCLK is stable here)
++    jmp pin L_LSB           ; LRCLK already high: we are a slot behind, send LSB now
++    wait 0 pin 1            ; fall 32
++L_LSB:
++    out pins 1              ; L LSB
++    wait 1 pin 0            ; if we are ahead, hold until LRCLK rises
++    pull block              ; R word
++    set y 30
++R_LOOP:                     ; R bit31..bit1 on falls 33..63
+     wait 1 pin 1
+-    out pins 1
+     wait 0 pin 1
+-    set y 29
+-
+-;r nbit
+-R_LOOP:
+-    wait 1 pin 1
+     out pins 1
+-    wait 0 pin 1
+     jmp y-- R_LOOP
++    wait 1 pin 1            ; rising edge in slot 63 (LRCLK is stable here)
++    jmp pin R_ON_TIME       ; LRCLK still high: on time
++    jmp R_LSB               ; LRCLK already low: we are a slot behind, send LSB now
++R_ON_TIME:
++    wait 0 pin 1            ; fall 64 (= slot 0 of next frame)
++R_LSB:
++    out pins 1              ; R LSB
++    wait 0 pin 0            ; if we are ahead, hold until LRCLK falls
++.wrap
+diff --git a/i2s_core.c b/i2s_core.c
+index 3486554..542b80f 100644
+--- a/i2s_core.c
++++ b/i2s_core.c
+@@ -250,6 +250,7 @@ static void i2s_slave_pio_init(void){
+     sm_config = i2s_slave_program_get_default_config(offset);
+     sm_config_set_out_pins(&sm_config, i2s_dout_pin, 1);
+     sm_config_set_in_pin_base(&sm_config, i2s_clk_pin_base);
++    sm_config_set_jmp_pin(&sm_config, i2s_clk_pin_base);   // LRCLK, used for frame re-alignment
+     sm_config_set_out_shift(&sm_config, false, false, 32);
+     sm_config_set_fifo_join(&sm_config, PIO_FIFO_JOIN_TX);
+     pio_sm_init(i2s_pio, i2s_sm, offset, &sm_config);
+-- 
+2.43.0
+
