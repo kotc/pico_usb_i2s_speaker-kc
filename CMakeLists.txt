@@ -85,3 +85,6 @@ pico_add_extra_outputs(pico_usb_i2s_speaker)
 set(SAMPLE_RATE 48000 CACHE STRING "sample rate")
 target_compile_definitions(pico_usb_i2s_speaker PRIVATE SAMPLE_RATE=${SAMPLE_RATE})
 
+set(DBG_UART 0 CACHE STRING "dbg uart")
+target_compile_definitions(pico_usb_i2s_speaker PRIVATE DBG_UART=${DBG_UART})
+

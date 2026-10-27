@@ -138,6 +138,13 @@ int main(void) {
   i2s_set_config(pio0, CLOCK_MODE_DEFAULT, MODE_I2S_SLAVE);
   board_init();
 
+#if DBG_UART >= 1
+  stdio_init_all();
+  //sleep_ms(1000);
+  printf("\r\nRP2040/RP2350 pico_usb_i2s_speaker-kc started\r\n");
+  printf("System clock: %.2f MHz\r\n", (double)clock_get_hz(clk_sys) / 1000000.0);
+#endif
+
   // i2s initialization
 //  i2s_set_pin(18, 20, 22);
 //  i2s_set_pin(6, 14, 13); // DOUT, LRCLK(BCLK=15), MCLK
@@ -689,14 +696,15 @@ void led(int col_ch, unsigned char bri) { // col_ch=0-b,1-g,2-r, bri=0..255
 
  ls = (ls & ~((unsigned int)0xFF << (col_ch*8) )) | ((unsigned int)bri << (col_ch*8) );
 
- if(col_ch==1) gpio_put(LED_PIN, (bri>0?1:0));
+ if(col_ch==0) gpio_put(LED_PIN, (bri>0?1:0));
 
  PIO pio = pio1; uint sm=0;
  put_pixel(pio, sm, ls);
 // if(a) { put_pixel(pio, sm, col); } else  { put_pixel(pio, sm, 0x000000); }
 }
-#if 1
+
 void led_blinking_task(void) {
+#if 1
   static uint32_t start_ms = 0;
   static bool led_state = false;
 
@@ -705,10 +713,10 @@ void led_blinking_task(void) {
   start_ms += blink_interval_ms;
 
 //  board_led_write(led_state);
-  led(0,led_state);
+//  led(0,led_state);
   led_state = 1 - led_state;
-}
 #endif
+}
 
 
 static uint32_t isqrt_u64(uint64_t x) {
@@ -732,7 +740,7 @@ static uint32_t isqrt_u64(uint64_t x) {
 
 #include <math.h>
 
-#define RMS_DB_MIN       (-60/2)
+#define RMS_DB_MIN       (-60)
 #define RMS_DB_MAX       (0)
 #define RMS_DB_RANGE     (RMS_DB_MAX-(RMS_DB_MIN))
 #define RMS_TABLE_SIZE   61
@@ -758,9 +766,9 @@ void rms_init(void)
 int rms_to_db(uint32_t rms)
 {
   if (rms < rms_threshold[0]) return RMS_DB_MIN;
-  if (rms >= rms_threshold[60]) return RMS_DB_MAX;
+  if (rms >= rms_threshold[RMS_TABLE_SIZE-1]) return RMS_DB_MAX;
 
-  unsigned int lo = 0, hi = 60;
+  unsigned int lo = 0, hi = RMS_TABLE_SIZE-1;
 
   while (lo + 1 < hi) {
     unsigned int mid = (lo + hi) / 2;
@@ -770,6 +778,16 @@ int rms_to_db(uint32_t rms)
   return (int)lo + RMS_DB_MIN;
 }
 
+void led_test() {
+ int i,d=1;
+ for(i=0;i<=255;i++) { led(0,i); sleep_ms(d); } // blue
+ for(i=255;i>=0;i--) { led(0,i); sleep_ms(d); }
+ for(i=0;i<=255;i++) { led(1,i); sleep_ms(d); } // green
+ for(i=255;i>=0;i--) { led(1,i); sleep_ms(d); }
+ for(i=0;i<=255;i++) { led(2,i); sleep_ms(d); } // red
+ for(i=255;i>=0;i--) { led(2,i); sleep_ms(d); }
+}
+ float uptime() { return to_ms_since_boot(get_absolute_time())/1000.0; }
 
 void core1_main(void){
   int dma_sample;
@@ -781,13 +799,13 @@ void core1_main(void){
 
   int sample;
   int32_t i2s_buf_l[DEQUEUE_MAX_LEN], i2s_buf_r[DEQUEUE_MAX_LEN];
-//  int64_t avg_l=0, avg_r=0, avg=0, avg_sc=0;
 
   gpio_init(LED_PIN);
   gpio_set_dir(LED_PIN, GPIO_OUT);
 
   PIO pio = pio1;  uint sm = 0;  uint offset = pio_add_program(pio, &ws2812_program);
   ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, false);
+  led_test();
 
   rms_init();
 
@@ -816,8 +834,7 @@ void core1_main(void){
 
     // printf("%3d\n", buf_length);
 
-if(berr>0) berr--;
-led(2,berr/8);
+if(berr>0) { berr--; led(2,berr/8); }
 
     // Unmute when the I2S queue reaches a certain level
     if (buf_length == 0 && mute == false){
@@ -866,6 +883,13 @@ led(2,1);
       uint32_t peak=(peak_l>peak_r)?peak_l:peak_r;
 
 led(1, (uint8_t)(  (rms_to_db(rms)-RMS_DB_MIN)*255/RMS_DB_RANGE));
+
+#if DBG_UART >= 1
+ uint8_t tt=  (uint8_t)(  (rms_to_db(rms)-RMS_DB_MIN)*255/RMS_DB_RANGE);
+ printf("[%.1f :: rms: %d, %.1fdB, bri: %d]\n", uptime(),
+  rms, rms_to_db(rms), tt
+ );
+#endif
 
       ts0=ts1; avg_sc=0; sum_sq_l=sum_sq_r=0; peak_l=peak_r=0;
     }
