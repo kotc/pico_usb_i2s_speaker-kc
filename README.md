@@ -22,10 +22,10 @@ assumes picotool is installed in /usr/local
 ```bash
 export PATH="$PWD/../picotool/build:$PATH"
 
-#SAMPLE_RATE="44100"
+# or 44100
 SAMPLE_RATE="48000"
 
-DBG_UART=1
+DBG_UART=0
 
 WHAT='rp2040'; BOARD="pico"
 #WHAT='rp2350'; BOARD="pico2"
