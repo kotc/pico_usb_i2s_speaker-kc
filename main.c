@@ -73,7 +73,7 @@ enum {
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
-unsigned short berr=0; // buffer underrun or other errors light the red led
+unsigned int berr=0; // buffer underrun or other errors light the red led
 
 
 #include "ws2812.pio.h"
@@ -690,19 +690,33 @@ void tud_audio_feedback_interval_isr(uint8_t func_id, uint32_t frame_number, uin
 // BLINKING TASK
 //--------------------------------------------------------------------+
 
+//////######
+float uptime() { return to_ms_since_boot(get_absolute_time())/1000.0; }
 
-void led(int col_ch, unsigned char bri) { // col_ch=0-b,1-g,2-r, bri=0..255
- static unsigned int ls=0x00000000; // led state
+unsigned int ls=0;
+/////###
+void led(int col_ch, unsigned int bri) { // col_ch=0-b,1-r,2-g, bri=0..255
+// static unsigned int ls=0x00000000; // led state
 
- ls = (ls & ~((unsigned int)0xFF << (col_ch*8) )) | ((unsigned int)bri << (col_ch*8) );
+ unsigned int ls0=ls;
 
- if(col_ch==0) gpio_put(LED_PIN, (bri>0?1:0));
+ if(col_ch>=0) {
+  if(bri>0xff) bri=0xff;
+  ls = (ls & ~((unsigned int)0xFF << (col_ch*8) )) | ((unsigned int)bri << (col_ch*8) );
+
+  if(col_ch==0) gpio_put(LED_PIN, (bri>0?1:0));
+ } else {
+  ls=col_ch & 0x00ffffff;
+ }
+
+ if(ls==ls0) return;
 
  PIO pio = pio1; uint sm=0;
  put_pixel(pio, sm, ls);
 // if(a) { put_pixel(pio, sm, col); } else  { put_pixel(pio, sm, 0x000000); }
+// printf("[%.1f :: col_ch=%d, bri=%3u, ls0=0x%08x, ls=0x%08x]\n", uptime(), col_ch, (unsigned int)bri, ls0, ls);
 }
-
+/////#################
 void led_blinking_task(void) {
 #if 1
   static uint32_t start_ms = 0;
@@ -713,12 +727,12 @@ void led_blinking_task(void) {
   start_ms += blink_interval_ms;
 
 //  board_led_write(led_state);
-//  led(0,led_state);
+  led(0,led_state);
   led_state = 1 - led_state;
 #endif
 }
 
-
+////////////////#########
 static uint32_t isqrt_u64(uint64_t x) {
   uint64_t res=0, bit=(uint64_t)1<<62;
 
@@ -752,17 +766,21 @@ static uint64_t rms_threshold[RMS_TABLE_SIZE];
  * Call once during startup, before audio processing begins.
  * Requires linking libm.
  */
+/////########
 void rms_init(void)
 {
   for (int db = RMS_DB_MIN; db <= RMS_DB_MAX; ++db) {
     double amplitude = pow(10.0, (double)db / 20.0) * 2147483648.0;
-    rms_threshold[db - RMS_DB_MIN] = (uint32_t)(amplitude + 0.5)/RMS_SCALE;
+    rms_threshold[db - RMS_DB_MIN] = (uint64_t)(amplitude + 0.5)/RMS_SCALE;
+//    rms_threshold[db - RMS_DB_MIN] = (uint64_t)(amplitude / RMS_SCALE + 0.5);
+//    printf("[db=%d, amplitude=%f, i=%d, rms_threshold=%llu]\n", db, amplitude, db - RMS_DB_MIN, rms_threshold[db - RMS_DB_MIN]);
   }
 }
 
 
 
 /* Returns dBFS as an integer from -60 to 0. */
+////#########
 int rms_to_db(uint32_t rms)
 {
   if (rms < rms_threshold[0]) return RMS_DB_MIN;
@@ -777,18 +795,23 @@ int rms_to_db(uint32_t rms)
 
   return (int)lo + RMS_DB_MIN;
 }
-
+/////########
 void led_test() {
  int i,d=1;
- for(i=0;i<=255;i++) { led(0,i); sleep_ms(d); } // blue
- for(i=255;i>=0;i--) { led(0,i); sleep_ms(d); }
- for(i=0;i<=255;i++) { led(1,i); sleep_ms(d); } // green
- for(i=255;i>=0;i--) { led(1,i); sleep_ms(d); }
- for(i=0;i<=255;i++) { led(2,i); sleep_ms(d); } // red
- for(i=255;i>=0;i--) { led(2,i); sleep_ms(d); }
+ if(1) {
+  led(0,255); sleep_ms(900); led(0,0); sleep_ms(100); // b
+  led(1,255); sleep_ms(900); led(1,0); sleep_ms(100); // r
+  led(2,255); sleep_ms(900); led(2,0); sleep_ms(100); // g
+ } else {
+  for(i=0;i<=255;i++) { led(0,i); sleep_ms(d); } // b
+  for(i=255;i>=0;i--) { led(0,i); sleep_ms(d); }
+  for(i=0;i<=255;i++) { led(1,i); sleep_ms(d); } // g
+  for(i=255;i>=0;i--) { led(1,i); sleep_ms(d); }
+  for(i=0;i<=255;i++) { led(2,i); sleep_ms(d); } // r
+  for(i=255;i>=0;i--) { led(2,i); sleep_ms(d); }
+ }
 }
- float uptime() { return to_ms_since_boot(get_absolute_time())/1000.0; }
-
+/////##########
 void core1_main(void){
   int dma_sample;
   bool mute = false;
@@ -819,7 +842,7 @@ void core1_main(void){
 
   while (1){
     buf_length = i2s_get_queue_length();
-#if 1
+#if SAMPLE_RATE == 48000
     // Send data to I2S in 0.5 ms chunks
     dequeue_len = i2s_get_sample_rate_hz() / 2000;
 #else
@@ -834,20 +857,16 @@ void core1_main(void){
 
     // printf("%3d\n", buf_length);
 
-if(berr>0) { berr--; led(2,berr/8); }
+    if(berr>0) { berr-=2; led(1,berr/8); } // r
 
     // Unmute when the I2S queue reaches a certain level
     if (buf_length == 0 && mute == false){
       mute = true;
-//      gpio_put(PICO_DEFAULT_LED_PIN, 0);
-//led(2,127);
-berr=127*8;
+      berr=127*8;
     }
     else if (buf_length >= (dequeue_len * 3) && mute == true){
       mute = false;
-//      gpio_put(PICO_DEFAULT_LED_PIN, 1);
-led(2,1);
-//led(1,1);
+      led(2,1); // g
     }
 
     if (mute == false){
@@ -882,13 +901,14 @@ led(2,1);
 
       uint32_t peak=(peak_l>peak_r)?peak_l:peak_r;
 
-led(1, (uint8_t)(  (rms_to_db(rms)-RMS_DB_MIN)*255/RMS_DB_RANGE));
+      led(2, (uint32_t)(  (rms_to_db(rms)-RMS_DB_MIN)*255/RMS_DB_RANGE)); // g
 
+#if 0
 #if DBG_UART >= 1
  uint8_t tt=  (uint8_t)(  (rms_to_db(rms)-RMS_DB_MIN)*255/RMS_DB_RANGE);
- printf("[%.1f :: rms: %d, %.1fdB, bri: %d]\n", uptime(),
-  rms, rms_to_db(rms), tt
- );
+ printf("[%.1f :: rms: %u, %d dB, bri: %u]\n", uptime(),
+  (unsigned)rms, rms_to_db(rms), (unsigned)tt );
+#endif
 #endif
 
       ts0=ts1; avg_sc=0; sum_sq_l=sum_sq_r=0; peak_l=peak_r=0;
@@ -905,9 +925,7 @@ led(1, (uint8_t)(  (rms_to_db(rms)-RMS_DB_MIN)*255/RMS_DB_RANGE));
 
         sample = dequeue_len;
         mute = true;
-//        gpio_put(PICO_DEFAULT_LED_PIN, 0);
-//led(1,0);
-berr=127*16;
+        berr=127*16; // r
       }
     }
     else{
@@ -917,7 +935,7 @@ berr=127*16;
         i2s_buf_r[i] = 0;
       }
       sample = dequeue_len;
-led(1,0);
+      if( (ls & (0xff << 8*2)) != 0) led(2,0); // turn off the green led
     }
 
     // Volume processing
