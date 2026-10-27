@@ -1,5 +1,5 @@
 # pico_usb_i2s_speaker-kc
-It is a USB DDC that outputs i2s with master clock using RP Pico and tinyusb.
+It is a USB DDC that outputs i2s with slave clock using RP Pico and tinyusb.
 The USB stack uses tinyusb.
 Additional mods by ariel/KotCzarny.
 
@@ -18,7 +18,7 @@ i2s-slave mode, 48kHz
 |MCLK|GPIO13|
 
 ## build
-assumes picotool is installed in /usr/local
+assumes picotool is built in ../picotool and installed in /usr/local
 ```bash
 export PATH="$PWD/../picotool/build:$PATH"
 
